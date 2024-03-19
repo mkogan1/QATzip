@@ -33,6 +33,69 @@
  *
  ***************************************************************************/
 #include "qzip.h"
+#include <sys/capability.h>
+#include <linux/capability.h>
+#include <sys/prctl.h>
+#include <sys/types.h>
+#include <sys/prctl.h>
+#include <sys/capability.h>
+#include <unistd.h>
+#include <sys/resource.h>
+
+
+// MK vvv
+static int drop_privileges()
+{
+  uid_t uid = 167;    // CEPH group
+  gid_t gid = 167;    // CEPH group
+  //gid_t gid = 982;  // QAT group
+
+
+  struct rlimit rlim;
+  int ret = getrlimit(RLIMIT_MEMLOCK, &rlim);
+  if (ret == -1) {
+    perror("getrlimit");
+    //return 1;
+  }
+  printf(">> Current memory lock limit (soft): %zu bytes\n", rlim.rlim_cur);
+  printf(">> Current memory lock limit (hard): %zu bytes\n", rlim.rlim_max);
+
+  // Increase memory lock limit (hypothetical value, adjust as needed)
+  //rlim.rlim_cur = 1024 * 1024 * 1024; // 1GB
+  rlim.rlim_cur = 209715200;
+  rlim.rlim_max = 209715200;
+
+  // Set the new limit
+  ret = setrlimit(RLIMIT_MEMLOCK, &rlim);
+  if (ret == -1) {
+    perror("setrlimit");
+    //return 1;
+  }
+
+  ret = getrlimit(RLIMIT_MEMLOCK, &rlim);
+  if (ret == -1) {
+    perror("getrlimit");
+    //return 1;
+  }
+  printf("<< Current memory lock limit (soft): %zu bytes\n", rlim.rlim_cur);
+  printf("<< Current memory lock limit (hard): %zu bytes\n", rlim.rlim_max);
+
+
+  if (setgid(gid) != 0) {
+    int err = errno;
+    printf("unable to setgid %u , errno=%u, exiting...\n", gid, err);
+    exit(1);
+  }
+  if (setuid(uid) != 0) {
+    int err = errno;
+    printf("unable to setuid %u , errno=%u, exiting...\n", uid, err);
+    exit(1);
+  }
+
+
+  return 0;
+}
+// MK ^^^
 
 
 int main(int argc, char **argv)
@@ -165,6 +228,11 @@ int main(int argc, char **argv)
             tryHelp();
         }
     }
+
+    // MK
+    printf("drop_privileges() <<< qzip: running as uid=%u, gid=%u\n", getuid(), getgid());
+    drop_privileges();
+    printf("drop_privileges() >>> qzip: running as uid=%u, gid=%u\n", getuid(), getgid());
 
     arg_count = argc - optind;
     if (0 == arg_count && isatty(fileno((FILE *)stdin))) {
