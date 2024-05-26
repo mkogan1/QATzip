@@ -41,14 +41,17 @@
 #include <sys/capability.h>
 #include <unistd.h>
 #include <sys/resource.h>
+#include <grp.h>
+#include <stdio.h>
+#include <pwd.h>
 
 
 // MK vvv
 static int drop_privileges()
 {
-  uid_t uid = 167;    // CEPH group
+  uid_t uid = 167;    // CEPH user
   gid_t gid = 167;    // CEPH group
-  //gid_t gid = 982;  // QAT group
+  gid_t gid_qat = 986;  // QAT group
 
 
   struct rlimit rlim;
@@ -60,25 +63,54 @@ static int drop_privileges()
   printf(">> Current memory lock limit (soft): %zu bytes\n", rlim.rlim_cur);
   printf(">> Current memory lock limit (hard): %zu bytes\n", rlim.rlim_max);
 
-  // Increase memory lock limit (hypothetical value, adjust as needed)
-  //rlim.rlim_cur = 1024 * 1024 * 1024; // 1GB
-  rlim.rlim_cur = 209715200;
-  rlim.rlim_max = 209715200;
+  // /*
+  {
+    // Increase memory lock limit (hypothetical value, adjust as needed)
+    //rlim.rlim_cur = 1024 * 1024 * 1024; // 1GB
+    rlim.rlim_cur = 209715200;
+    rlim.rlim_max = 209715200;
 
-  // Set the new limit
-  ret = setrlimit(RLIMIT_MEMLOCK, &rlim);
-  if (ret == -1) {
-    perror("setrlimit");
-    //return 1;
-  }
+    // Set the new limit
+    ret = setrlimit(RLIMIT_MEMLOCK, &rlim);
+    if (ret == -1) {
+      perror("setrlimit");
+      //return 1;
+    }
 
-  ret = getrlimit(RLIMIT_MEMLOCK, &rlim);
-  if (ret == -1) {
-    perror("getrlimit");
-    //return 1;
+    ret = getrlimit(RLIMIT_MEMLOCK, &rlim);
+    if (ret == -1) {
+      perror("getrlimit");
+      //return 1;
+    }
+    printf("<< Current memory lock limit (soft): %zu bytes\n", rlim.rlim_cur);
+    printf("<< Current memory lock limit (hard): %zu bytes\n", rlim.rlim_max);
   }
-  printf("<< Current memory lock limit (soft): %zu bytes\n", rlim.rlim_cur);
-  printf("<< Current memory lock limit (hard): %zu bytes\n", rlim.rlim_max);
+  // */
+
+
+  struct passwd *pw;
+  pw = getpwuid(uid);
+  if (pw == NULL) {
+    perror("getpwuid");
+    exit(1);
+  }
+  char *username = pw->pw_name;
+  // char *username = "ceph";
+  // if (initgroups(username, getgid()) != 0) {
+  // if (initgroups(username, 986) != 0) {
+  struct group *grp;
+  grp = getgrnam("qat");
+  if (grp == NULL) {
+      perror("getgrnam");
+      exit(1);
+  }
+  // gid_t gid_qat = grp->gr_gid;
+  gid_qat = grp->gr_gid;
+  if (initgroups(username, gid_qat) != 0) {
+          int err = errno;
+          printf("unable to initgroups %s , errno=%u, exiting...\n", username, err);
+          exit(1);
+  }
 
 
   if (setgid(gid) != 0) {
@@ -93,6 +125,28 @@ static int drop_privileges()
   }
 
 
+  gid_t groups[NGROUPS_MAX];
+  int num_groups = getgroups(NGROUPS_MAX, groups);
+  if (num_groups == -1) {
+    perror("getgroups");
+    exit(1);
+  }
+  printf("<< after << Current user groups:\n");
+  for (int i = 0; i < num_groups; i++) {
+          struct group *grp = getgrgid(groups[i]);
+          if (grp != NULL) {
+                  printf("  %s = %d \n", grp->gr_name, grp->gr_gid);
+          }
+  }
+
+
+  ret = getrlimit(RLIMIT_MEMLOCK, &rlim);
+  if (ret == -1) {
+    perror("getrlimit");
+    //return 1;
+  }
+  printf("<< Current memory lock limit (soft): %zu bytes\n", rlim.rlim_cur);
+  printf("<< Current memory lock limit (hard): %zu bytes\n", rlim.rlim_max);
   return 0;
 }
 // MK ^^^
